@@ -1,162 +1,165 @@
-"""
-First Comment Userbot (с заходом в связанную группу)
-
-📌 Возможности:
-- При старте просит указать канал (username без @).
-- При /on находит связанную группу комментариев, вступает в неё и слушает новые посты.
-- Как только появляется новый пост — мгновенно оставляет комментарий.
-- Управление командами из Saved Messages.
-
-🧰 Команды:
-  /set_text <текст> — задать текст для комментариев
-  /text             — показать текущий текст
-  /on               — включить юзербот
-  /off              — выключить
-  /status           — показать состояние
-  /ch <username>    — сменить канал
-  /help             — подсказка
-"""
-
-import asyncio
+import json
+import random
 from telethon import TelegramClient, events
-from telethon.tl.functions.channels import GetFullChannelRequest, JoinChannelRequest
-import time
 
-# 🔴 Вставь свои данные
+# ==== ДАННЫЕ АККАУНТА ====
 API_ID = 25165568
 API_HASH = "0f13997a616a03ccd368f3c0f794208c"
 SESSION_NAME = "first_comment_userbot"
 
+# ==== ФАЙЛ С НАСТРОЙКАМИ ====
+CONFIG_FILE = "config.json"
+
+# ==== ЗАГРУЗКА / СОХРАНЕНИЕ ====
+def load_config():
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {
+            "ENABLED": True,
+            "KEYWORDS": [],
+            "COMMENTS": [],
+            "CHANNELS": []
+        }
+
+def save_config():
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+config = load_config()
+
+# ==== КЛИЕНТ ====
 client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
 
-channel_username = None
-linked_chat_id = None
-current_text = ""
-enabled = False
-
-
-# --- Вспомогательное ---
-async def is_owner(event):
-    me = await client.get_me()
-    return event.sender_id == me.id
-
-
-# --- Команды ---
-@client.on(events.NewMessage(pattern="/set_text (.+)"))
-async def set_text(event):
-    if not await is_owner(event):
-        return
-    global current_text
-    current_text = event.pattern_match.group(1)
-    await event.respond(f"✅ Текст установлен: {current_text}")
-
-
-@client.on(events.NewMessage(pattern="/text"))
-async def show_text(event):
-    if not await is_owner(event):
-        return
-    await event.respond(f"📝 Текущий текст: {current_text or '❌ не задан'}")
-
-
-@client.on(events.NewMessage(pattern="/on"))
-async def turn_on(event):
-    if not await is_owner(event):
-        return
-    global enabled, linked_chat_id
-    enabled = True
-    await event.respond("✅ Бот включён")
-
-    if channel_username:
-        try:
-            full = await client(GetFullChannelRequest(channel_username))
-            if full.full_chat.linked_chat_id:
-                linked_chat_id = full.full_chat.linked_chat_id
-                try:
-                    await client(JoinChannelRequest(linked_chat_id))
-                    print("✅ Вошёл в связанную группу комментариев")
-                except Exception as e:
-                    print("⚠️ Уже в группе или ошибка:", e)
-            else:
-                print("❌ У канала нет связанной группы комментариев")
-        except Exception as e:
-            print("Ошибка при получении инфо о канале:", e)
-
-
-@client.on(events.NewMessage(pattern="/off"))
-async def turn_off(event):
-    if not await is_owner(event):
-        return
-    global enabled
-    enabled = False
-    await event.respond("⛔ Бот выключён")
-
-
-@client.on(events.NewMessage(pattern="/status"))
-async def status(event):
-    if not await is_owner(event):
-        return
-    msg = f"📡 Канал: {channel_username or '❌ не выбран'}\n"
-    msg += f"💬 Текст: {current_text or '❌ не задан'}\n"
-    msg += f"⚙️ Статус: {'✅ ВКЛ' if enabled else '⛔ ВЫКЛ'}"
-    await event.respond(msg)
-
-
-@client.on(events.NewMessage(pattern="/ch (.+)"))
-async def set_channel(event):
-    if not await is_owner(event):
-        return
-    global channel_username, linked_chat_id
-    channel_username = event.pattern_match.group(1).lstrip("@")
-    linked_chat_id = None
-    await event.respond(f"📡 Канал изменён на: {channel_username}")
-
-
-@client.on(events.NewMessage(pattern="/help"))
-async def help_cmd(event):
-    if not await is_owner(event):
-        return
-    await event.respond(
-        "🧰 Команды:\n"
-        "/set_text <текст> — задать текст\n"
-        "/text — показать текст\n"
-        "/on — включить\n"
-        "/off — выключить\n"
-        "/status — статус\n"
-        "/ch <username> — сменить канал\n"
-        "/help — помощь"
-    )
-
-
-# --- Логика комментария ---
+# ==== АВТООТВЕТ НА НОВЫЕ ПОСТЫ КАНАЛОВ ====
 @client.on(events.NewMessage)
-async def first_comment(event):
-    global enabled, channel_username, current_text, linked_chat_id
-    if not enabled or not current_text or not channel_username:
+async def handler(event):
+    if not config["ENABLED"]:
         return
 
-    # Новый пост от канала
-    if event.is_channel and event.chat and event.chat.username == channel_username and not event.fwd_from:
-        try:
-            start_time = time.perf_counter()
-            if linked_chat_id:
-                await client.send_message(entity=linked_chat_id, message=current_text, reply_to=event.id)
-            else:
-                await client.send_message(entity=event.chat, message=current_text, comment_to=event.id)
+    chat = await event.get_chat()
+    if not hasattr(chat, "username"):
+        return
 
-            elapsed = (time.perf_counter() - start_time) * 1000
-            print(f"⚡ Комментарий добавлен за {elapsed:.2f} мс: {current_text}")
-        except Exception as e:
-            print("Ошибка при попытке комментировать:", e)
+    username = (chat.username or "").lower()
+    if username not in [c.lower() for c in config["CHANNELS"]]:
+        return
 
+    # Проверка на ключевые слова
+    text = event.raw_text.lower()
+    if not any(w in text for w in config["KEYWORDS"]):
+        return
 
-# --- Старт ---
-async def main():
-    global channel_username
-    await client.start()
-    channel_username = input("Введите username канала (без @): ").strip()
-    print("Запущено... /help для команд")
-    await client.run_until_disconnected()
+    # Проверка что это пост канала (без reply на людей)
+    if not event.is_channel:
+        return
 
+    # Находим связанную группу комментариев
+    try:
+        linked_chat = (await client(GetFullChannelRequest(chat.id))).full_chat.linked_chat_id
+        if not linked_chat:
+            return
+    except:
+        return
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    if not config["COMMENTS"]:
+        return
+
+    reply_text = random.choice(config["COMMENTS"])
+    try:
+        await client.send_message(linked_chat, reply_text, reply_to=event.id)
+        print(f"💬 Ответил в {username}: {reply_text}")
+    except Exception as e:
+        print(f"❌ Ошибка при ответе: {e}")
+
+# ==== КОМАНДЫ В ИЗБРАННОМ ====
+@client.on(events.NewMessage(outgoing=True))
+async def commands(event):
+    global config
+    me = await client.get_me()
+    if event.sender_id != me.id:  
+        return
+
+    text = event.raw_text.strip()
+
+    if text == "/help":
+        await event.reply(
+            "📖 Доступные команды:\n\n"
+            "/on – включить автоответчик\n"
+            "/off – выключить автоответчик\n"
+            "/addword СЛОВО – добавить ключевое слово\n"
+            "/delword СЛОВО – удалить ключевое слово\n"
+            "/addcomment ТЕКСТ – добавить комментарий\n"
+            "/delcomment ТЕКСТ – удалить комментарий\n"
+            "/addchannel @канал – добавить канал\n"
+            "/delchannel @канал – удалить канал\n"
+            "/list – показать настройки\n"
+            "/help – список команд"
+        )
+
+    elif text == "/on":
+        config["ENABLED"] = True
+        save_config()
+        await event.reply("✅ Бот включен")
+
+    elif text == "/off":
+        config["ENABLED"] = False
+        save_config()
+        await event.reply("⛔ Бот выключен")
+
+    elif text.startswith("/addword "):
+        word = text.split(" ", 1)[1].lower()
+        if word not in config["KEYWORDS"]:
+            config["KEYWORDS"].append(word)
+            save_config()
+            await event.reply(f"✅ Слово добавлено: {word}")
+
+    elif text.startswith("/delword "):
+        word = text.split(" ", 1)[1].lower()
+        if word in config["KEYWORDS"]:
+            config["KEYWORDS"].remove(word)
+            save_config()
+            await event.reply(f"🗑 Слово удалено: {word}")
+
+    elif text.startswith("/addcomment "):
+        msg = text.split(" ", 1)[1]
+        if msg not in config["COMMENTS"]:
+            config["COMMENTS"].append(msg)
+            save_config()
+            await event.reply(f"✅ Комментарий добавлен: {msg}")
+
+    elif text.startswith("/delcomment "):
+        msg = text.split(" ", 1)[1]
+        if msg in config["COMMENTS"]:
+            config["COMMENTS"].remove(msg)
+            save_config()
+            await event.reply(f"🗑 Комментарий удалён: {msg}")
+
+    elif text.startswith("/addchannel "):
+        ch = text.split(" ", 1)[1].replace("@", "")
+        if ch not in config["CHANNELS"]:
+            config["CHANNELS"].append(ch)
+            save_config()
+            await event.reply(f"✅ Канал добавлен: {ch}")
+
+    elif text.startswith("/delchannel "):
+        ch = text.split(" ", 1)[1].replace("@", "")
+        if ch in config["CHANNELS"]:
+            config["CHANNELS"].remove(ch)
+            save_config()
+            await event.reply(f"🗑 Канал удалён: {ch}")
+
+    elif text == "/list":
+        await event.reply(
+            f"📋 Настройки:\n"
+            f"▶ Статус: {'ВКЛ' if config['ENABLED'] else 'ВЫКЛ'}\n"
+            f"🔑 Слова: {', '.join(config['KEYWORDS']) or '—'}\n"
+            f"💬 Комментарии: {', '.join(config['COMMENTS']) or '—'}\n"
+            f"📢 Каналы: {', '.join(config['CHANNELS']) or '—'}"
+        )
+
+# ==== СТАРТ ====
+print("🚀 Бот запущен. Команды пиши в Избранном (/help)")
+client.start()
+client.run_until_disconnected()
