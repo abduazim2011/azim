@@ -5,7 +5,7 @@ from telethon import TelegramClient, events
 # ==== ДАННЫЕ АККАУНТА ====
 API_ID = 25165568
 API_HASH = "0f13997a616a03ccd368f3c0f794208c"
-SESSION_NAME = "first_comment_userbot"
+SESSION_NAME = "first_comment"
 
 # ==== ФАЙЛ С НАСТРОЙКАМИ ====
 CONFIG_FILE = "config.json"
